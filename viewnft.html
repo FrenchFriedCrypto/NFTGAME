@@ -8,7 +8,7 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      max-width: 800px;
+      max-width: 90%;
       margin: 2rem auto;
       text-align: center;
     }
@@ -33,7 +33,9 @@
       border: 1px solid #ccc;
       border-radius: 8px;
       padding: 1rem;
-      width: 200px;
+      flex: 0 0 calc((100% - 6rem) / 7);
+      max-width: calc((100% - 6rem) / 7);
+      box-sizing: border-box;
       box-shadow: 1px 1px 4px rgba(0,0,0,0.1);
     }
     .nft-card img {
@@ -68,11 +70,12 @@
     const nftAbi = [
       "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
       "function tokenURI(uint256 tokenId) view returns (string)",
-      "function getRarityName(uint256 tokenId) view returns (string)"
+      "function getRarityName(uint256 tokenId) view returns (string)",
+      "function safeTransferFrom(address from, address to, uint256 tokenId)"
     ];
     // ------------------------
 
-    let provider, signer, nftContract;
+    let provider, signer, nftContract, userAddress;
     const accountEl  = document.getElementById("account");
     const btnConnect = document.getElementById("connectBtn");
     const gallery    = document.getElementById("gallery");
@@ -86,14 +89,13 @@
       provider = new ethers.providers.Web3Provider(window.ethereum);
       await provider.send("eth_requestAccounts", []);
       signer = provider.getSigner();
-      const user = await signer.getAddress();
-      accountEl.textContent = "Connected: " + user;
+      userAddress = await signer.getAddress();
+      accountEl.textContent = "Connected: " + userAddress;
 
       nftContract = new ethers.Contract(nftAddress, nftAbi, signer);
-      await loadOwnedViaEvents(user);
+      await loadOwnedViaEvents(userAddress);
     }
 
-    // Utility to turn ipfs:// URI into an https URL
     function resolveIPFS(uri) {
       if (uri.startsWith("ipfs://")) {
         return "https://ipfs.io/ipfs/" + uri.slice(7);
@@ -104,30 +106,26 @@
     async function loadOwnedViaEvents(owner) {
       gallery.innerHTML = "<p>Loading your NFTs…</p>";
 
-      const startBlock  = 8260249;                 // ← set this to your deploy block
+      const startBlock  = 8260249;
       const endBlock    = await provider.getBlockNumber();
 
       const filterTo    = nftContract.filters.Transfer(null, owner);
       const filterFrom  = nftContract.filters.Transfer(owner, null);
 
-      // now pass block-range args
       const [minted, burned] = await Promise.all([
         nftContract.queryFilter(filterTo,  startBlock, endBlock),
         nftContract.queryFilter(filterFrom, startBlock, endBlock),
       ]);
 
-      // 2. Build a Set of currently‐owned token IDs
       const owned = new Set();
       for (const e of minted)  owned.add(e.args.tokenId.toString());
       for (const e of burned)  owned.delete(e.args.tokenId.toString());
 
-      // 3. Render
       gallery.innerHTML = "";
       if (owned.size === 0) {
         gallery.innerHTML = "<p>You don't own any NFTs in this collection.</p>";
         return;
       }
-      // For each tokenId:
       for (const tokenId of owned) {
         const rawUri = await nftContract.tokenURI(tokenId);
         const rarity = await nftContract.getRarityName(tokenId);
@@ -135,13 +133,11 @@
       }
     }
 
-
-    // Now takes a third parameter: the on-chain rarity string
     async function renderCard(tokenId, metadataUri, rarity) {
       const card = document.createElement('div');
       card.className = 'nft-card';
 
-      // 1️⃣ Image (same as before)
+      // --- IMAGE LOADING ---
       try {
         const res = await fetch(metadataUri);
         const ct  = res.headers.get('content-type') || '';
@@ -160,34 +156,41 @@
         card.appendChild(img);
 
       } catch {
-        // fallback if fetch fails
         const img = document.createElement('img');
         img.src = metadataUri;
         img.alt = `NFT #${tokenId}`;
         card.appendChild(img);
       }
 
-      // 2️⃣ Rarity right under the image (from chain)
+      // --- RARITY & ID ---
       const rP = document.createElement('p');
       rP.textContent = `Rarity: ${rarity}`;
       card.appendChild(rP);
 
-      // 3️⃣ Token ID
       const idP = document.createElement('p');
       idP.textContent = `#${tokenId}`;
       card.appendChild(idP);
 
-      // 4️⃣ “More...” link
-      const link = document.createElement('a');
-      link.href       = metadataUri;
-      link.target     = '_blank';
-      link.textContent = 'More...';
-      card.appendChild(link);
+      // --- SEND BUTTON ---
+      const sendBtn = document.createElement('button');
+      sendBtn.textContent = 'Send';
+      sendBtn.addEventListener('click', async () => {
+        const recipient = prompt(`Enter the address to send NFT #${tokenId} to:`);
+        if (!recipient) return;
+        try {
+          const tx = await nftContract.safeTransferFrom(userAddress, recipient, tokenId);
+          await tx.wait();
+          alert(`Transfer successful! Tx hash:\n${tx.hash}`);
+          // Optionally: remove the card or reload the page
+        } catch (err) {
+          console.error(err);
+          alert(`Transfer failed:\n${err.message || err}`);
+        }
+      });
+      card.appendChild(sendBtn);
 
       gallery.appendChild(card);
     }
-
-
   </script>
 
 </body>
