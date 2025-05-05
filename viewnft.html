@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>My Predictive Duel NFTs</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 2rem auto;
+      text-align: center;
+    }
+    #account {
+      margin-bottom: 1rem;
+      font-weight: bold;
+    }
+    button {
+      margin: .5rem;
+      padding: .75rem 1.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #gallery {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 1.5rem;
+    }
+    .nft-card {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem;
+      width: 200px;
+      box-shadow: 1px 1px 4px rgba(0,0,0,0.1);
+    }
+    .nft-card img {
+      max-width: 100%;
+      border-radius: 4px;
+    }
+    .nft-card p {
+      margin: .5rem 0 0;
+      font-size: 0.9rem;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation Button -->
+  <button onclick="location.href='mintnft.html'">Mint NFT</button>
+  <button onclick="location.href='viewnft.html'">View NFT</button>
+
+  <h1>My Predictive Duel NFTs</h1>
+  <div id="account">Not connected</div>
+  <button id="connectBtn">Connect Wallet</button>
+
+  <div id="gallery"></div>
+
+  <script type="module">
+    import { ethers } from 'https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.esm.min.js';
+    import { NFT_ADDRESS } from "./config.js";
+
+    // --- CONFIGURE THESE ---
+    const nftAddress = NFT_ADDRESS;
+    const nftAbi = [
+      "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+      "function tokenURI(uint256 tokenId) view returns (string)",
+      "function getRarityName(uint256 tokenId) view returns (string)"
+    ];
+    // ------------------------
+
+    let provider, signer, nftContract;
+    const accountEl  = document.getElementById("account");
+    const btnConnect = document.getElementById("connectBtn");
+    const gallery    = document.getElementById("gallery");
+
+    btnConnect.addEventListener('click', connectWallet);
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        return alert("Please install MetaMask or another Web3 wallet.");
+      }
+      provider = new ethers.providers.Web3Provider(window.ethereum);
+      await provider.send("eth_requestAccounts", []);
+      signer = provider.getSigner();
+      const user = await signer.getAddress();
+      accountEl.textContent = "Connected: " + user;
+
+      nftContract = new ethers.Contract(nftAddress, nftAbi, signer);
+      await loadOwnedViaEvents(user);
+    }
+
+    // Utility to turn ipfs:// URI into an https URL
+    function resolveIPFS(uri) {
+      if (uri.startsWith("ipfs://")) {
+        return "https://ipfs.io/ipfs/" + uri.slice(7);
+      }
+      return uri;
+    }
+
+    async function loadOwnedViaEvents(owner) {
+      gallery.innerHTML = "<p>Loading your NFTs…</p>";
+
+      const startBlock  = 8260249;                 // ← set this to your deploy block
+      const endBlock    = await provider.getBlockNumber();
+
+      const filterTo    = nftContract.filters.Transfer(null, owner);
+      const filterFrom  = nftContract.filters.Transfer(owner, null);
+
+      // now pass block-range args
+      const [minted, burned] = await Promise.all([
+        nftContract.queryFilter(filterTo,  startBlock, endBlock),
+        nftContract.queryFilter(filterFrom, startBlock, endBlock),
+      ]);
+
+      // 2. Build a Set of currently‐owned token IDs
+      const owned = new Set();
+      for (const e of minted)  owned.add(e.args.tokenId.toString());
+      for (const e of burned)  owned.delete(e.args.tokenId.toString());
+
+      // 3. Render
+      gallery.innerHTML = "";
+      if (owned.size === 0) {
+        gallery.innerHTML = "<p>You don't own any NFTs in this collection.</p>";
+        return;
+      }
+      // For each tokenId:
+      for (const tokenId of owned) {
+        const rawUri = await nftContract.tokenURI(tokenId);
+        const rarity = await nftContract.getRarityName(tokenId);
+        await renderCard(tokenId, resolveIPFS(rawUri), rarity);
+      }
+    }
+
+
+    // Now takes a third parameter: the on-chain rarity string
+    async function renderCard(tokenId, metadataUri, rarity) {
+      const card = document.createElement('div');
+      card.className = 'nft-card';
+
+      // 1️⃣ Image (same as before)
+      try {
+        const res = await fetch(metadataUri);
+        const ct  = res.headers.get('content-type') || '';
+        let imgUrl;
+
+        if (ct.includes('application/json')) {
+          const meta = await res.json();
+          imgUrl = resolveIPFS(meta.image || meta.image_url || '');
+        } else {
+          imgUrl = metadataUri;
+        }
+
+        const img = document.createElement('img');
+        img.src = imgUrl;
+        img.alt = `NFT #${tokenId}`;
+        card.appendChild(img);
+
+      } catch {
+        // fallback if fetch fails
+        const img = document.createElement('img');
+        img.src = metadataUri;
+        img.alt = `NFT #${tokenId}`;
+        card.appendChild(img);
+      }
+
+      // 2️⃣ Rarity right under the image (from chain)
+      const rP = document.createElement('p');
+      rP.textContent = `Rarity: ${rarity}`;
+      card.appendChild(rP);
+
+      // 3️⃣ Token ID
+      const idP = document.createElement('p');
+      idP.textContent = `#${tokenId}`;
+      card.appendChild(idP);
+
+      // 4️⃣ “More...” link
+      const link = document.createElement('a');
+      link.href       = metadataUri;
+      link.target     = '_blank';
+      link.textContent = 'More...';
+      card.appendChild(link);
+
+      gallery.appendChild(card);
+    }
+
+
+  </script>
+
+</body>
+</html>

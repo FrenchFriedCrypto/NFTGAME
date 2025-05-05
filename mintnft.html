@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Predictive Duel NFT Minter</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 2rem auto;
+      text-align: center;
+    }
+    #account {
+      margin-bottom: 1rem;
+      font-weight: bold;
+    }
+    button {
+      margin: .5rem;
+      padding: .75rem 1.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    input {
+      width: 4rem;
+      margin-left: .5rem;
+    }
+    span.cost {
+      margin-left: .5rem;
+      font-weight: bold;
+    }
+    hr {
+      margin: 2rem 0;
+      border: none;
+      border-top: 1px solid #eee;
+    }
+
+    /* Gallery grid, same as your view page */
+    .gallery {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 1.5rem;
+    }
+    .nft-card {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem;
+      width: 200px;
+      box-shadow: 1px 1px 4px rgba(0,0,0,0.1);
+      text-align: left;
+    }
+    .nft-card img {
+      max-width: 100%;
+      border-radius: 4px;
+    }
+    .nft-card p {
+      margin: .5rem 0 0;
+      font-size: 0.9rem;
+      word-break: break-word;
+    }
+    .nft-card a {
+      display: inline-block;
+      margin-top: .5rem;
+      font-size: 0.85rem;
+      color: #0066ff;
+      text-decoration: none;
+    }
+    .nft-card a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <button onclick="location.href='mintnft.html'">Mint NFT</button>
+  <button onclick="location.href='viewnft.html'">View NFT</button>
+
+  <h1>Predictive Duel NFT Minter</h1>
+  <div id="account">Not connected</div>
+  <button id="connect">Connect Wallet</button>
+
+  <hr/>
+
+  <!-- ETH mint section -->
+  <label>
+    Quantity:
+    <input type="number" id="ethCount" min="1" value="1" />
+    <span id="ethCost" class="cost">0.5 ETH</span>
+  </label>
+  <button id="mintEth" disabled>Mint with ETH</button>
+
+  <hr/>
+
+  <!-- USDT mint section -->
+  <label>
+    Quantity:
+    <input type="number" id="usdtCount" min="1" value="1" />
+    <span id="usdtCost" class="cost">1000 USDT</span>
+  </label>
+  <button id="mintUsdt" disabled>Mint with USDT</button>
+
+  <!-- Gallery for newly minted NFTs -->
+  <div id="mintGallery" class="gallery"></div>
+
+  <script type="module">
+    import { ethers } from 'https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.esm.min.js';
+    import { NFT_ADDRESS, USDT_ADDRESS } from "./config.js";
+
+    const nftAddress  = NFT_ADDRESS;
+    const usdtAddress = USDT_ADDRESS;
+
+    const nftAbi = [
+      "function mintWithETH() payable",
+      "function mintWithUSDT(uint256 amount)",
+      "function tokenURI(uint256 tokenId) view returns (string)",
+      "event Minted(address indexed minter, uint256 indexed tokenId, string rarity, bool paidInETH)"
+    ];
+    const erc20Abi = [
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function decimals() view returns (uint8)",
+      "function allowance(address owner, address spender) view returns (uint256)"
+    ];
+
+    let provider, signer, nftContract, usdtContract;
+
+    const accountEl      = document.getElementById("account");
+    const btnConnect     = document.getElementById("connect");
+    const btnMintEth     = document.getElementById("mintEth");
+    const btnMintUsdt    = document.getElementById("mintUsdt");
+    const ethCountInput  = document.getElementById("ethCount");
+    const usdtCountInput = document.getElementById("usdtCount");
+    const ethCostEl      = document.getElementById("ethCost");
+    const usdtCostEl     = document.getElementById("usdtCost");
+    const gallery        = document.getElementById("mintGallery");
+
+    // Helpers to format amounts
+    const formatEther = bn => ethers.utils.formatEther(bn) + " ETH";
+    const formatUnits = (bn, dec) => ethers.utils.formatUnits(bn, dec);
+
+    function updateEthCost() {
+      const count = Math.max(1, +ethCountInput.value || 1);
+      const unitPrice = ethers.utils.parseEther("0.5");
+      ethCostEl.textContent = formatEther(unitPrice.mul(count));
+    }
+
+    async function updateUsdtCost() {
+      if (!usdtContract) return;
+      const count = Math.max(1, +usdtCountInput.value || 1);
+      const dec = await usdtContract.decimals();
+      const unit = ethers.utils.parseUnits("1000", dec);
+      usdtCostEl.textContent = formatUnits(unit.mul(count), dec) + " USDT";
+    }
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        return alert("Please install MetaMask or another Web3 wallet.");
+      }
+      provider = new ethers.providers.Web3Provider(window.ethereum);
+      await provider.send("eth_requestAccounts", []);
+      signer = provider.getSigner();
+      const user = await signer.getAddress();
+      accountEl.textContent = "Connected: " + user;
+
+      nftContract  = new ethers.Contract(nftAddress, nftAbi, signer);
+      usdtContract = new ethers.Contract(usdtAddress, erc20Abi, signer);
+
+      // Enable mint buttons & cost updates
+      btnMintEth.disabled  = false;
+      btnMintUsdt.disabled = false;
+      ethCountInput.addEventListener("input", updateEthCost);
+      updateEthCost();
+      usdtCountInput.addEventListener("input", updateUsdtCost);
+      updateUsdtCost();
+
+      // Listen for Minted events
+      nftContract.on("Minted", async (_minter, tokenId, rarity, paidInETH) => {
+        console.log("🎉 Minted", tokenId.toString(), rarity, paidInETH);
+        renderMintedCard(tokenId.toString(), rarity);
+      });
+    }
+
+    btnConnect.addEventListener('click', connectWallet);
+
+    btnMintEth.addEventListener('click', async () => {
+      try {
+        const count = Math.max(1, +ethCountInput.value || 1);
+        const total = ethers.utils.parseEther("0.5").mul(count);
+        await nftContract.callStatic.mintWithETH({ value: total });
+        const tx = await nftContract.mintWithETH({ value: total });
+        accountEl.textContent = `⛓ ETH mint tx sent: ${tx.hash}`;
+        await tx.wait();
+        accountEl.textContent = "✅ Mint with ETH confirmed!";
+      } catch (e) {
+        console.error(e);
+        alert("ETH mint failed: " + e.message);
+      }
+    });
+
+    btnMintUsdt.addEventListener('click', async () => {
+      btnMintUsdt.disabled = true;
+      try {
+        // 1️⃣ Compute how much USDT we need
+        const count = Math.max(1, +usdtCountInput.value || 1);
+        const dec   = await usdtContract.decimals();
+        const unit  = ethers.utils.parseUnits("1000", dec);
+        const amount= unit.mul(count);
+
+        // 2️⃣ Check existing allowance
+        const owner     = await signer.getAddress();
+        const allowance = await usdtContract.allowance(owner, nftAddress);
+
+        if (allowance.lt(amount)) {
+          // 3️⃣ Only approve if allowance < needed amount
+          const approveTx = await usdtContract.approve(nftAddress, amount);
+          accountEl.textContent = `⛓ Approve tx: ${approveTx.hash}`;
+          await approveTx.wait();
+          accountEl.textContent = `✅ Approved ${count} × 1 000 USDT.`;
+        } else {
+          console.log("✅ Allowance sufficient, skipping approve()");
+          accountEl.textContent = `✅ Allowance ok; skipping approval.`;
+        }
+
+        // 4️⃣ Now do the mint
+        const mintTx = await nftContract.mintWithUSDT(amount);
+        accountEl.textContent = `⛓ Mint tx: ${mintTx.hash}`;
+        await mintTx.wait();
+        accountEl.textContent = "✅ Mint with USDT confirmed!";
+
+      } catch (err) {
+        console.error("❌ USDT mint error:", err);
+        alert("USDT mint failed: " + (err.error?.message || err.message));
+      } finally {
+        btnMintUsdt.disabled = false;
+      }
+    });
+
+
+    // Renders a single card into the gallery
+    async function renderMintedCard(tokenId, rarity) {
+      // fetch metadata URI
+      let raw = await nftContract.tokenURI(tokenId);
+      if (raw.startsWith("ipfs://")) raw = "https://ipfs.io/ipfs/" + raw.slice(7);
+
+      // fetch JSON if needed
+      let imgUrl = raw;
+      try {
+        const res = await fetch(raw);
+        if ((res.headers.get('content-type')||'').includes('application/json')) {
+          const json = await res.json();
+          imgUrl = json.image?.startsWith("ipfs://")
+            ? "https://ipfs.io/ipfs/"+json.image.slice(7)
+            : json.image || json.image_url;
+        }
+      } catch {}
+
+      // build card
+      const card = document.createElement('div');
+      card.className = 'nft-card';
+      card.innerHTML = `
+        <img src="${imgUrl}" alt="NFT #${tokenId}" />
+        <p><strong>Rarity:</strong> ${rarity}</p>
+        <p><strong>ID:</strong> #${tokenId}</p>
+        <a href="${raw}" target="_blank">More…</a>
+      `;
+      gallery.appendChild(card);
+    }
+  </script>
+
+</body>
+</html>
